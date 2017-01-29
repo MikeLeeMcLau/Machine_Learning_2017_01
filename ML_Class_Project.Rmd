@@ -1,0 +1,161 @@
+---
+title: "Machine_Learning - Project -"
+author: "Mike McLaughlin"
+date: "January 29, 2017"
+output: html_document
+---
+###Overview
+
+The purpose of this assignment is to review data provided related to weight lifting and the results.   The data was downloaded from these sites.   
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The objective is to determine a good model to use to predict the best outcome.  Participants were asked to lifted weights using various techniques.   Some techniques were considered correct and some were considered incorrect.   By using data from tracking devices on the belt, forearm, arm, and dumbbell we aim to predict the observation class.
+
+Background on the data can be found at the below site.
+
+http://groupware.les.inf.puc-rio.br/har
+
+Is that also been requested to cite the below if using the data.
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4XAg7Neec
+
+####Load Libraries
+```{r load_library, echo=FALSE}
+library(caret)
+library(rpart)
+library(gbm)
+library(randomForest)
+library(plyr)
+library(rpart.plot)
+library(rattle)
+```
+
+
+####Get Data
+
+Download data and insure directory exsists.
+
+```{r get_data}
+ #Insure directory for class is available.
+  rwd <- "C:/2016/Mike_Classes/Machine_Learning/Class_Project"
+  #If directory is not available create directory.
+  if(!file.exists(rwd)){dir.create(rwd)}
+  #Set working directory.
+  setwd(rwd)
+  #Create a variable with the directory to download files.
+  assignData <- "./Data"
+  #Check that if directory exists.   If not create directory.
+  if(!file.exists(assignData)){dir.create(assignData)}
+  #Retrieve files and unzip into working directory.
+  url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  filename1 <- paste(assignData,"/","pml-training.csv", sep="")
+  filename2 <- paste(assignData,"/","pml-testing.csv", sep="")
+    download.file(url1,filename1)
+    download.file(url2,filename2)
+
+    x_train <- read.table(filename1, sep=",",header=TRUE)
+    y_test <- read.table(filename2, sep=",",head=TRUE)
+
+```
+
+###Review and Setup Data
+
+The data appears to have columns with all "NA" or over half the rows are "NA"  I am going to remove those columns to have a data set that includes data in most rows and columns.
+
+```{r clean_data}
+   zeroValueTraining <- nearZeroVar(x_train, saveMetrics=TRUE)
+    trainingSub <- x_train[,zeroValueTraining$nzv==FALSE]
+    
+    trainingSub <- trainingSub[,7:length(colnames(trainingSub))]
+    
+    # Count NA in each column
+    nonnaCols <- as.vector(apply(trainingSub, 2, function(trainingSub) length(which(!is.na(trainingSub)))))
+    
+    # remove columns that have more than 50% NAs
+    dropNAs <- c()
+    for (i in 1:length(nonnaCols)) {
+      if (nonnaCols[i] > nrow(trainingSub)*.50) {
+        dropNAs <- c(dropNAs, colnames(trainingSub)[i])
+      }
+    }
+    
+    #remove NA data in training and testing
+    trainingSub <- trainingSub[,(names(trainingSub) %in% dropNAs)]
+    
+    keepCols <- colnames(trainingSub[, -53]) #remove classe as it's not contained in testing
+    testingSub <- y_test[keepCols] #keep only variables in testing
+    dim(trainingSub)
+    dim(testingSub) 
+```
+
+
+###Create second testing set for cross validation
+
+As the included testing data is a very small sample, I am going to split the original training set into a training and second testing set using a 60/40 split.   This will allow me to test my model on a much larger set of data, which hopefully will provided a more accurate model.
+
+```{r second_testing_set}
+   set.seed(254)
+    sTS <- createDataPartition(trainingSub$classe, p=.6 , list=FALSE)
+    trainingSub1 <- trainingSub[sTS,]
+    trainTest2 <- trainingSub[-sTS,]
+    dim(trainingSub1) 
+    dim(trainTest2)
+```
+
+###First Test using RPART/Decision Tree
+
+This is a very fast and visual test.  I will use this as a first attempt.
+```{r first_test}
+    modFit1 <- train(classe ~ .,method="rpart",data=trainingSub1)
+    fancyRpartPlot(modFit1$finalModel)
+
+    predict1 <- predict(modFit1, newdata=trainingSub1)
+    confusionMatrix(predict1, trainingSub1$classe)
+```
+
+This test worked quicky and created a nice graphic.   However, the accuracy rate of about 48% is not acceptable.
+
+###Second test using Random Forest
+
+This test will take much longer, but hopefully will provide a higher level of Accuracy.
+
+```{r second_test}
+  #modFit2 <- train(trainingSub1$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=trainingSub1)
+    modFit2 <- train(classe ~ ., method="rf",trControl=trainControl(method = "cv", number = 4), data=trainingSub1)
+    predict2 <- predict(modFit2,trainingSub1)
+    confusionMatrix(predict2, trainingSub1$classe)
+    
+    print(modFit2, digits=3)
+```
+
+This test has produced 100% accuracy which may suggest an overfitted model.   I will test this model on the test set that was created from the original training test.   As you recall, this had about 7800 records to test.
+```{r Second_test_set}
+   predict3 <- predict(modFit2,trainTest2)
+  confusionMatrix(predict3, trainTest2$classe)
+```
+
+A 99% accuracy rate.   Since it is not much beyond 99% is will use this model.  However, I will test other methods offline to get a sense of how they compare.
+
+Finally, I will fit the model to the original testing set and produce the results.
+
+```{r oringal_test_set}
+predict3 <- predict(modFit2,trainTest2)
+    confusionMatrix(predict3, trainTest2$classe)
+    
+    predictTesting <- predict(modFit2, newdata=y_test)
+    predictTesting
+```
+
+###Conclusions
+
+The Decision Tree method is much faster with less accuracy.   The random forest method provides a much higher level of accuracy.  However, it is very slow.   One potential conclusion from the data is that accurate processes will be easier to predict when compared with inaccurate process.   
+
+Class A is the accurate weight lifting process and it has a much higher accuracy rate in both models.   I suspect a device will have a difficult time distinguishing between "half-way up" and "half-way down".  This is an opportunity for more review beyond this assignment
+
+
